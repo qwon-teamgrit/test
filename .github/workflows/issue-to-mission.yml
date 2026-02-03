@@ -1,0 +1,39 @@
+name: Issue to Mission PR
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  make-mission:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create mission file from issue body
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          mkdir -p .agent/missions
+          cat > ".agent/missions/issue-${ISSUE_NUMBER}.md" << EOF
+          # Mission: Issue ${ISSUE_NUMBER}
+          Title: ${ISSUE_TITLE}
+
+          ## Input Spec (verbatim)
+          EOF
+          printf "%s\n" "$ISSUE_BODY" >> ".agent/missions/issue-${ISSUE_NUMBER}.md"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore(mission): add mission for issue #${{ github.event.issue.number }}"
+          title: "Mission: issue #${{ github.event.issue.number }}"
+          body: "Auto-generated mission file from issue body."
+          branch: "mission/issue-${{ github.event.issue.number }}"
