@@ -65,3 +65,98 @@ jobs:
       - name: Bring mission markdown folder into workspace
         run: |
           git fetch origin "${{ steps.mission_pr.outputs.head_ref }}" --depth=1
+
+          rm -rf .agent/missions
+          mkdir -p .agent
+
+          git checkout "origin/${{ steps.mission_pr.outputs.head_ref }}" -- .agent/missions
+
+          echo "Mission files in workspace:"
+          ls -la .agent/missions || true
+
+      - name: Install Codex CLI
+        run: |
+          npm i -g @openai/codex
+          which codex
+          codex --help || true
+
+      - name: Create Codex profile
+        run: |
+          mkdir -p .codex
+          cat > .codex/profile.json << 'EOF'
+          {
+            "provider": "openai",
+            "model": "gpt-5.2-codex"
+          }
+          EOF
+
+          echo "Profile created at:"
+          ls -la .codex
+          cat .codex/profile.json
+
+      - name: Run Codex to generate code changes
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_AUTH_TOKEN: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "OPENAI_API_KEY is empty in this run (secrets not injected)"
+            exit 1
+          else
+            echo "OPENAI_API_KEY is present"
+          fi
+
+          if [ ! -f ".codex/profile.json" ]; then
+            echo "Missing .codex/profile.json"
+            ls -la
+            exit 1
+          fi
+
+          PROMPT=$(cat << 'EOF'
+          You are an autonomous senior software engineer.
+
+          Read the markdown files under .agent/missions/ and apply required code changes.
+          Do not modify the mission markdown files.
+          Prefer minimal, reviewable diffs.
+          EOF
+          )
+
+          codex exec --profile .codex/profile.json "$PROMPT"
+
+      - name: Commit code changes
+        run: |
+          # mission 파일은 커밋하지 않음 (컨텍스트로만 사용)
+          git restore --staged .agent/missions 2>/dev/null || true
+          git checkout -- .agent/missions 2>/dev/null || true
+
+          if git status --porcelain | grep .; then
+            git config user.name "codex-bot"
+            git config user.email "codex-bot@users.noreply.github.com"
+            git add .
+            git commit -m "feat: implement mission spec (auto by Codex)"
+            git push -u origin "${{ steps.branch.outputs.branch }}"
+          else
+            echo "No code changes produced by Codex."
+            exit 0
+          fi
+
+      - name: Create PR for generated code
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr create --repo "$REPO" \
+            --title "Codegen: ${{ steps.mission_pr.outputs.title }}" \
+            --body "Auto-generated code changes from mission PR #${{ steps.mission_pr.outputs.pr_number }}.\n\nReview in Antigravity before merging.\n\nThis PR does not deploy until merged." \
+            --base "${{ steps.mission_pr.outputs.base_ref }}" \
+            --head "${{ steps.branch.outputs.branch }}"
+
+      - name: Comment mission PR with link to code PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          MISSION_PR: ${{ steps.mission_pr.outputs.pr_number }}
+        run: |
+          CODE_PR=$(gh pr list --repo "$REPO" --state open --head "${{ steps.branch.outputs.branch }}" --json number,url --limit 1 | jq -r '.[0].url')
+          gh pr comment "$MISSION_PR" --repo "$REPO" --body "Codex created a code PR: $CODE_PR\n\nReview in Antigravity. No deployment happens until merge."
