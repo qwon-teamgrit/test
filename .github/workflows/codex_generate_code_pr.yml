@@ -77,17 +77,15 @@ jobs:
       - name: Install Codex CLI
         run: |
           npm i -g @openai/codex
+          echo "codex path:"
           which codex
+          echo "codex version/help:"
+          codex --version || true
           codex --help || true
 
       - name: Create Codex profile
         run: |
           set -e
-          echo "PWD:"
-          pwd
-          echo "List root before:"
-          ls -la
-
           mkdir -p .codex
           cat > .codex/profile.json << 'EOF'
           {
@@ -96,12 +94,11 @@ jobs:
           }
           EOF
 
-          echo "List .codex after:"
+          echo "Profile created:"
           ls -la .codex
           test -f .codex/profile.json && echo "profile exists" || (echo "profile missing" && exit 1)
 
-
-           - name: Run Codex to generate code changes
+      - name: Run Codex to generate code changes
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -129,6 +126,7 @@ jobs:
 
           PROMPT=$(cat << 'EOF'
           You are an autonomous senior software engineer.
+
           Read the markdown files under .agent/missions/ and apply required code changes.
           Do not modify the mission markdown files.
           Prefer minimal, reviewable diffs.
@@ -136,7 +134,6 @@ jobs:
           )
 
           codex exec --profile .codex/profile.json "$PROMPT"
-
 
       - name: Commit code changes
         run: |
