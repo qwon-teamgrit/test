@@ -25,7 +25,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
-          PR_JSON=$(gh pr list --repo "$REPO" --state open --head "mission/issue-" --json number,headRefName,baseRefName,title --limit 1)
+          PR_JSON=$(gh pr list \
+            --repo "$REPO" \
+            --state open \
+            --search "head:mission/issue- sort:updated-desc" \
+            --json number,headRefName,baseRefName,title \
+            --limit 1)
+
           echo "$PR_JSON"
 
           PR_NUMBER=$(echo "$PR_JSON" | jq -r '.[0].number')
@@ -33,7 +39,7 @@ jobs:
           BASE_REF=$(echo "$PR_JSON" | jq -r '.[0].baseRefName')
           TITLE=$(echo "$PR_JSON" | jq -r '.[0].title')
 
-          if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "null" ]; then
+          if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "null" ] || [ -z "$HEAD_REF" ] || [ "$HEAD_REF" = "null" ]; then
             echo "No open mission PR found. Exiting."
             exit 0
           fi
@@ -56,25 +62,17 @@ jobs:
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
           git checkout -b "$BRANCH"
 
-      - name: Fetch mission markdown from mission PR branch
+      - name: Bring mission markdown folder into workspace
         run: |
-          git fetch origin ${{ steps.mission_pr.outputs.head_ref }} --depth=1
-          mkdir -p .agent/missions
-          git show origin/${{ steps.mission_pr.outputs.head_ref }}:.agent/missions/issue-${{ steps.mission_pr.outputs.pr_number }}.md > /tmp/mission.md || true
+          git fetch origin "${{ steps.mission_pr.outputs.head_ref }}" --depth=1
 
-          # mission 파일 이름이 issue-<ISSUE_NUMBER>.md 라서, PR번호랑 다를 수 있음
-          # 그래서 그냥 mission 폴더 전체를 가져오는 방식으로 안전하게 처리
-          rm -rf /tmp/missions
-          mkdir -p /tmp/missions
-          git ls-tree -r --name-only origin/${{ steps.mission_pr.outputs.head_ref }} .agent/missions | while read -r f; do
-            mkdir -p "/tmp/missions/$(dirname "$f")"
-            git show "origin/${{ steps.mission_pr.outputs.head_ref }}:$f" > "/tmp/missions/$f"
-          done
-
-          # 워크스페이스에도 missions 복사해 codex 컨텍스트로 사용
           rm -rf .agent/missions
           mkdir -p .agent
-          cp -r /tmp/missions/.agent/missions .agent/
+
+          git checkout "origin/${{ steps.mission_pr.outputs.head_ref }}" -- .agent/missions
+
+          echo "Mission files in workspace:"
+          ls -la .agent/missions || true
 
       - name: Install Codex CLI
         run: |
@@ -139,6 +137,5 @@ jobs:
           REPO: ${{ github.repository }}
           MISSION_PR: ${{ steps.mission_pr.outputs.pr_number }}
         run: |
-          # 가장 최근에 생성된 PR 링크 가져오기
           CODE_PR=$(gh pr list --repo "$REPO" --state open --head "${{ steps.branch.outputs.branch }}" --json number,url --limit 1 | jq -r '.[0].url')
           gh pr comment "$MISSION_PR" --repo "$REPO" --body "Codex created a code PR: $CODE_PR\n\nReview in Antigravity. No deployment happens until merge."
