@@ -82,6 +82,12 @@ jobs:
 
       - name: Create Codex profile
         run: |
+          set -e
+          echo "PWD:"
+          pwd
+          echo "List root before:"
+          ls -la
+
           mkdir -p .codex
           cat > .codex/profile.json << 'EOF'
           {
@@ -90,16 +96,25 @@ jobs:
           }
           EOF
 
-          echo "Profile created at:"
+          echo "List .codex after:"
           ls -la .codex
-          cat .codex/profile.json
+          test -f .codex/profile.json && echo "profile exists" || (echo "profile missing" && exit 1)
 
-      - name: Run Codex to generate code changes
+
+           - name: Run Codex to generate code changes
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_AUTH_TOKEN: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          set -e
+          echo "PWD:"
+          pwd
+          echo "List root:"
+          ls -la
+          echo "List .codex:"
+          ls -la .codex || true
+
           if [ -z "$OPENAI_API_KEY" ]; then
             echo "OPENAI_API_KEY is empty in this run (secrets not injected)"
             exit 1
@@ -109,13 +124,11 @@ jobs:
 
           if [ ! -f ".codex/profile.json" ]; then
             echo "Missing .codex/profile.json"
-            ls -la
             exit 1
           fi
 
           PROMPT=$(cat << 'EOF'
           You are an autonomous senior software engineer.
-
           Read the markdown files under .agent/missions/ and apply required code changes.
           Do not modify the mission markdown files.
           Prefer minimal, reviewable diffs.
@@ -123,6 +136,7 @@ jobs:
           )
 
           codex exec --profile .codex/profile.json "$PROMPT"
+
 
       - name: Commit code changes
         run: |
