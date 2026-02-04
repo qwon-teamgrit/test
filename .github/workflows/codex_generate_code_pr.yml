@@ -83,20 +83,20 @@ jobs:
           codex --version || true
           codex --help || true
 
-      - name: Create Codex profile
+      - name: Create Codex profile (named)
         run: |
           set -e
-          mkdir -p .codex
-          cat > .codex/profile.json << 'EOF'
+          mkdir -p .codex/profiles
+          cat > .codex/profiles/default.json << 'EOF'
           {
             "provider": "openai",
             "model": "gpt-5.2-codex"
           }
           EOF
 
-          echo "Profile created:"
-          ls -la .codex
-          test -f .codex/profile.json && echo "profile exists" || (echo "profile missing" && exit 1)
+          echo "Profiles created:"
+          ls -la .codex/profiles
+          test -f .codex/profiles/default.json && echo "profile exists" || (echo "profile missing" && exit 1)
 
       - name: Run Codex to generate code changes
         env:
@@ -111,6 +111,8 @@ jobs:
           ls -la
           echo "List .codex:"
           ls -la .codex || true
+          echo "List .codex/profiles:"
+          ls -la .codex/profiles || true
 
           if [ -z "$OPENAI_API_KEY" ]; then
             echo "OPENAI_API_KEY is empty in this run (secrets not injected)"
@@ -119,8 +121,8 @@ jobs:
             echo "OPENAI_API_KEY is present"
           fi
 
-          if [ ! -f ".codex/profile.json" ]; then
-            echo "Missing .codex/profile.json"
+          if [ ! -f ".codex/profiles/default.json" ]; then
+            echo "Missing .codex/profiles/default.json"
             exit 1
           fi
 
@@ -133,7 +135,7 @@ jobs:
           EOF
           )
 
-          codex exec --profile .codex/profile.json "$PROMPT"
+          codex exec --profile default "$PROMPT"
 
       - name: Commit code changes
         run: |
