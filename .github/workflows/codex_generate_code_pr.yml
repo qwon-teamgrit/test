@@ -76,32 +76,37 @@ jobs:
 
       - name: Install Codex CLI
         run: |
-          npm i -g @openai/codex || true
-          codex --version || true
+          npm i -g @openai/codex
+          which codex
+          codex --help || true
 
       - name: Run Codex to generate code changes
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          cat << 'EOF' > codex_prompt.txt
+          PROMPT=$(cat << 'EOF'
           You are an autonomous senior software engineer.
 
           The markdown files under .agent/missions/ are authoritative mission specifications.
-          Generate the required code changes to comply with the missions.
+          Read them and generate the required code changes in this repository to comply with the missions.
 
           Rules:
           - Only change code required to satisfy the missions.
           - Do not change unrelated code.
           - Do not modify the mission markdown files.
           - Prefer minimal, reviewable diffs.
+
+          Mission files to follow:
           EOF
+          )
 
-          CHANGED=$(ls .agent/missions/*.md 2>/dev/null || true)
-          echo "$CHANGED"
+          echo "Mission files:"
+          ls -la .agent/missions || true
 
-          codex exec \
-            --prompt-file codex_prompt.txt \
-            --context "$CHANGED"
+          FILES=$(ls .agent/missions/*.md 2>/dev/null || true)
+          PROMPT="$PROMPT\n$FILES"
+
+          codex exec "$PROMPT"
 
       - name: Commit code changes
         run: |
