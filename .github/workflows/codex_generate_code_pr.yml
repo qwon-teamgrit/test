@@ -84,6 +84,13 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "OPENAI_API_KEY is empty in this run (secrets not injected)"
+            exit 1
+          else
+            echo "OPENAI_API_KEY is present"
+          fi
+
           PROMPT=$(cat << 'EOF'
           You are an autonomous senior software engineer.
 
@@ -95,16 +102,8 @@ jobs:
           - Do not change unrelated code.
           - Do not modify the mission markdown files.
           - Prefer minimal, reviewable diffs.
-
-          Mission files to follow:
           EOF
           )
-
-          echo "Mission files:"
-          ls -la .agent/missions || true
-
-          FILES=$(ls .agent/missions/*.md 2>/dev/null || true)
-          PROMPT="$PROMPT\n$FILES"
 
           codex exec "$PROMPT"
 
