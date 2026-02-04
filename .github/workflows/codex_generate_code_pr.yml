@@ -83,6 +83,8 @@ jobs:
       - name: Run Codex to generate code changes
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_AUTH_TOKEN: ${{ secrets.OPENAI_API_KEY }}
         run: |
           if [ -z "$OPENAI_API_KEY" ]; then
             echo "OPENAI_API_KEY is empty in this run (secrets not injected)"
@@ -91,17 +93,13 @@ jobs:
             echo "OPENAI_API_KEY is present"
           fi
 
+          # provider 강제
+          export OPENAI_PROVIDER=openai
+
           PROMPT=$(cat << 'EOF'
           You are an autonomous senior software engineer.
-
-          The markdown files under .agent/missions/ are authoritative mission specifications.
-          Read them and generate the required code changes in this repository to comply with the missions.
-
-          Rules:
-          - Only change code required to satisfy the missions.
-          - Do not change unrelated code.
-          - Do not modify the mission markdown files.
-          - Prefer minimal, reviewable diffs.
+          Read the markdown files under .agent/missions/ and apply required code changes.
+          Do not modify the mission markdown files.
           EOF
           )
 
