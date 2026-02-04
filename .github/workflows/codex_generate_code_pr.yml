@@ -80,8 +80,20 @@ jobs:
           which codex
           codex --help || true
 
+      - name: Create Codex profile
+        run: |
+          mkdir -p .codex
+          cat > .codex/profile.json << 'EOF'
+          {
+            "provider": "openai",
+            "model": "gpt-5.2-codex"
+          }
+          EOF
+          echo "Created .codex/profile.json"
+
       - name: Run Codex to generate code changes
         env:
+          # 여러 이름으로 동시에 주입 (CLI가 어떤 변수를 읽든 잡히게)
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_AUTH_TOKEN: ${{ secrets.OPENAI_API_KEY }}
@@ -93,17 +105,16 @@ jobs:
             echo "OPENAI_API_KEY is present"
           fi
 
-          # provider 강제
-          export OPENAI_PROVIDER=openai
-
           PROMPT=$(cat << 'EOF'
           You are an autonomous senior software engineer.
+
           Read the markdown files under .agent/missions/ and apply required code changes.
           Do not modify the mission markdown files.
+          Prefer minimal, reviewable diffs.
           EOF
           )
 
-          codex exec "$PROMPT"
+          codex exec --profile .codex/profile.json "$PROMPT"
 
       - name: Commit code changes
         run: |
