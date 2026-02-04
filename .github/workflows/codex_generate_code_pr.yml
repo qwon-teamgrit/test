@@ -1,0 +1,144 @@
+name: Codex Generate Code PR from Mission
+
+on:
+  workflow_run:
+    workflows: ["Issue to Mission PR"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: codex-generate-${{ github.event.workflow_run.id }}
+  cancel-in-progress: true
+
+jobs:
+  generate-code-pr:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Find latest open mission PR
+        id: mission_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          PR_JSON=$(gh pr list --repo "$REPO" --state open --head "mission/issue-" --json number,headRefName,baseRefName,title --limit 1)
+          echo "$PR_JSON"
+
+          PR_NUMBER=$(echo "$PR_JSON" | jq -r '.[0].number')
+          HEAD_REF=$(echo "$PR_JSON" | jq -r '.[0].headRefName')
+          BASE_REF=$(echo "$PR_JSON" | jq -r '.[0].baseRefName')
+          TITLE=$(echo "$PR_JSON" | jq -r '.[0].title')
+
+          if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "null" ]; then
+            echo "No open mission PR found. Exiting."
+            exit 0
+          fi
+
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "head_ref=$HEAD_REF" >> $GITHUB_OUTPUT
+          echo "base_ref=$BASE_REF" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+
+      - name: Checkout base branch (start code changes from base)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.mission_pr.outputs.base_ref }}
+          fetch-depth: 0
+
+      - name: Create code branch
+        id: branch
+        run: |
+          BRANCH="codex/mission-${{ steps.mission_pr.outputs.pr_number }}"
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          git checkout -b "$BRANCH"
+
+      - name: Fetch mission markdown from mission PR branch
+        run: |
+          git fetch origin ${{ steps.mission_pr.outputs.head_ref }} --depth=1
+          mkdir -p .agent/missions
+          git show origin/${{ steps.mission_pr.outputs.head_ref }}:.agent/missions/issue-${{ steps.mission_pr.outputs.pr_number }}.md > /tmp/mission.md || true
+
+          # mission 파일 이름이 issue-<ISSUE_NUMBER>.md 라서, PR번호랑 다를 수 있음
+          # 그래서 그냥 mission 폴더 전체를 가져오는 방식으로 안전하게 처리
+          rm -rf /tmp/missions
+          mkdir -p /tmp/missions
+          git ls-tree -r --name-only origin/${{ steps.mission_pr.outputs.head_ref }} .agent/missions | while read -r f; do
+            mkdir -p "/tmp/missions/$(dirname "$f")"
+            git show "origin/${{ steps.mission_pr.outputs.head_ref }}:$f" > "/tmp/missions/$f"
+          done
+
+          # 워크스페이스에도 missions 복사해 codex 컨텍스트로 사용
+          rm -rf .agent/missions
+          mkdir -p .agent
+          cp -r /tmp/missions/.agent/missions .agent/
+
+      - name: Install Codex CLI
+        run: |
+          npm i -g @openai/codex || true
+          codex --version || true
+
+      - name: Run Codex to generate code changes
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          cat << 'EOF' > codex_prompt.txt
+          You are an autonomous senior software engineer.
+
+          The markdown files under .agent/missions/ are authoritative mission specifications.
+          Generate the required code changes to comply with the missions.
+
+          Rules:
+          - Only change code required to satisfy the missions.
+          - Do not change unrelated code.
+          - Do not modify the mission markdown files.
+          - Prefer minimal, reviewable diffs.
+          EOF
+
+          CHANGED=$(ls .agent/missions/*.md 2>/dev/null || true)
+          echo "$CHANGED"
+
+          codex exec \
+            --prompt-file codex_prompt.txt \
+            --context "$CHANGED"
+
+      - name: Commit code changes
+        run: |
+          # mission 파일은 커밋하지 않음 (컨텍스트로만 사용)
+          git restore --staged .agent/missions 2>/dev/null || true
+          git checkout -- .agent/missions 2>/dev/null || true
+
+          if git status --porcelain | grep .; then
+            git config user.name "codex-bot"
+            git config user.email "codex-bot@users.noreply.github.com"
+            git add .
+            git commit -m "feat: implement mission spec (auto by Codex)"
+            git push -u origin "${{ steps.branch.outputs.branch }}"
+          else
+            echo "No code changes produced by Codex."
+            exit 0
+          fi
+
+      - name: Create PR for generated code
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr create --repo "$REPO" \
+            --title "Codegen: ${{ steps.mission_pr.outputs.title }}" \
+            --body "Auto-generated code changes from mission PR #${{ steps.mission_pr.outputs.pr_number }}.\n\nReview in Antigravity before merging.\n\nThis PR does not deploy until merged." \
+            --base "${{ steps.mission_pr.outputs.base_ref }}" \
+            --head "${{ steps.branch.outputs.branch }}"
+
+      - name: Comment mission PR with link to code PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          MISSION_PR: ${{ steps.mission_pr.outputs.pr_number }}
+        run: |
+          # 가장 최근에 생성된 PR 링크 가져오기
+          CODE_PR=$(gh pr list --repo "$REPO" --state open --head "${{ steps.branch.outputs.branch }}" --json number,url --limit 1 | jq -r '.[0].url')
+          gh pr comment "$MISSION_PR" --repo "$REPO" --body "Codex created a code PR: $CODE_PR\n\nReview in Antigravity. No deployment happens until merge."
